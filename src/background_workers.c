@@ -85,11 +85,114 @@ int ensureRunQueue(const char *devicestr, RunQueueInfo **run_queue_info) {
   return result;
 }
 
+/**
+ * Helper method to batch multiple incoming queue items that use the model with input tensors of the same shape.
+ *
+ * @param run_queue_info_ptr
+ * @param batch_rinfo_ptr
+ * @param evicted_items_ptr
+ * @param run_queue_len
+ * @return
+ */
+int RAI_autoBatch(RunQueueInfo **run_queue_info_ptr,
+                  RedisAI_RunInfo ***batch_rinfo_ptr,
+                  queueItem ***evicted_items_ptr, long long run_queue_len) {
+  RunQueueInfo *run_queue_info = *run_queue_info_ptr;
+  RedisAI_RunInfo **batch_rinfo = *batch_rinfo_ptr;
+  queueItem **evicted_items = *evicted_items_ptr;
+  queueItem *item = queueFront(run_queue_info->run_queue);
+
+  while (item) {
+    RedisAI_RunInfo *rinfo = (RedisAI_RunInfo *)item->value;
+
+    if (evicted_items) {
+      array_free(evicted_items);
+      array_free(batch_rinfo);
+    }
+    evicted_items = array_new(queueItem *, run_queue_len);
+    batch_rinfo = array_new(RedisAI_RunInfo *, run_queue_len);
+
+    array_append(evicted_items, item);
+    array_append(batch_rinfo, rinfo);
+
+    if (rinfo->sctx) {
+      break;
+    }
+
+    // DAGRUN
+    if (rinfo->use_local_context == 1) {
+      break;
+    }
+
+    size_t batchsize = rinfo->mctx->model->opts.batchsize;
+
+    if (batchsize == 0) {
+      break;
+    }
+
+    size_t current_batchsize = RAI_RunInfoBatchSize(rinfo);
+
+    if (current_batchsize == 0 || current_batchsize >= batchsize) {
+      break;
+    }
+
+    queueItem *next_item = item->next;
+
+    while (next_item != NULL) {
+      RedisAI_RunInfo *next_rinfo = (RedisAI_RunInfo *)next_item->value;
+
+      if (RAI_RunInfoBatchable(rinfo, next_rinfo) == 0) {
+        next_item = queueNext(next_item);
+        continue;
+      }
+
+      int next_batchsize = RAI_RunInfoBatchSize(next_rinfo);
+
+      if (current_batchsize + next_batchsize > batchsize) {
+        break;
+      }
+
+      array_append(evicted_items, next_item);
+      array_append(batch_rinfo, next_rinfo);
+
+      current_batchsize += next_batchsize;
+      next_item = queueNext(next_item);
+    }
+
+    size_t minbatchsize = rinfo->mctx->model->opts.minbatchsize;
+
+    if (minbatchsize == 0 || current_batchsize >= minbatchsize) {
+      break;
+    }
+
+    item = item->next;
+  }
+
+  if (item == NULL) {
+    array_free(evicted_items);
+    array_free(batch_rinfo);
+    pthread_mutex_unlock(&run_queue_info->run_queue_mutex);
+    return 1;
+  }
+
+  for (long long i = 0; i < array_len(evicted_items); i++) {
+    queueEvict(run_queue_info->run_queue, evicted_items[i]);
+  }
+
+  pthread_mutex_unlock(&run_queue_info->run_queue_mutex);
+  *run_queue_info_ptr = run_queue_info;
+  *batch_rinfo_ptr = batch_rinfo;
+  *evicted_items_ptr = evicted_items;
+  return 0;
+}
+
 void *RedisAI_Run_ThreadMain(void *arg) {
   RunQueueInfo *run_queue_info = (RunQueueInfo *)arg;
   pthread_t self = pthread_self();
   RAI_PTHREAD_SETNAME("redisai_bthread");
   pthread_mutex_lock(&run_queue_info->run_queue_mutex);
+  queueItem **evicted_items = NULL;
+  RedisAI_RunInfo **batch_rinfo = NULL;
   while (true) {
     int rc = pthread_cond_wait(&run_queue_info->queue_condition_var,
                                &run_queue_info->run_queue_mutex);
@@ -97,90 +200,10 @@ void *RedisAI_Run_ThreadMain(void *arg) {
     long long run_queue_len = queueLength(run_queue_info->run_queue);
 
     while (run_queue_len > 0) {
-      queueItem **evicted_items = NULL;
-      RedisAI_RunInfo **batch_rinfo = NULL;
-
-      queueItem *item = queueFront(run_queue_info->run_queue);
-
-      while (item) {
-        RedisAI_RunInfo *rinfo = (RedisAI_RunInfo *)item->value;
-
-        if (evicted_items) {
-          array_free(evicted_items);
-          array_free(batch_rinfo);
-        }
-        evicted_items = array_new(queueItem *, run_queue_len);
-        batch_rinfo = array_new(RedisAI_RunInfo *, run_queue_len);
-
-        array_append(evicted_items, item);
-        array_append(batch_rinfo, rinfo);
-
-        if (rinfo->sctx) {
-          break;
-        }
-
-        // DAGRUN
-        if (rinfo->use_local_context==1){
-          break;
-        }
-
-        size_t batchsize = rinfo->mctx->model->opts.batchsize;
-
-        if (batchsize == 0) {
-          break;
-        }
-
-        size_t current_batchsize = RAI_RunInfoBatchSize(rinfo);
-
-        if (current_batchsize == 0 || current_batchsize >= batchsize) {
-          break;
-        }
-
-        queueItem *next_item = item->next;
-
-        while (next_item != NULL) {
-          RedisAI_RunInfo *next_rinfo = (RedisAI_RunInfo *)next_item->value;
-
-          if (RAI_RunInfoBatchable(rinfo, next_rinfo) == 0) {
-            next_item = queueNext(next_item);
-            continue;
-          }
-
-          int next_batchsize = RAI_RunInfoBatchSize(next_rinfo);
-
-          if (current_batchsize + next_batchsize > batchsize) {
-            break;
-          }
-
-          array_append(evicted_items, next_item);
-          array_append(batch_rinfo, next_rinfo);
-
-          current_batchsize += next_batchsize;
-          next_item = queueNext(next_item);
-        }
-
-        size_t minbatchsize = rinfo->mctx->model->opts.minbatchsize;
-
-        if (minbatchsize == 0 || current_batchsize >= minbatchsize) {
-          break;
-        }
-
-        item = item->next;
-      }
-
-      if (item == NULL) {
-        array_free(evicted_items);
-        array_free(batch_rinfo);
-        pthread_mutex_unlock(&run_queue_info->run_queue_mutex);
+      if (RAI_autoBatch(&run_queue_info, &batch_rinfo, &evicted_items,
+                        run_queue_len)) {
         break;
       }
-
-      for (long long i = 0; i < array_len(evicted_items); i++) {
-        queueEvict(run_queue_info->run_queue, evicted_items[i]);
-      }
-
-      pthread_mutex_unlock(&run_queue_info->run_queue_mutex);
-
       if (array_len(batch_rinfo) > 0) {
         if (batch_rinfo[0]->use_local_context == 1) {
           RedisAI_DagRunSession(batch_rinfo[0]);
@@ -188,15 +211,12 @@ void *RedisAI_Run_ThreadMain(void *arg) {
           RAI_ModelRunScriptRunSession(batch_rinfo);
         }
       }
-
       for (long long i = 0; i < array_len(evicted_items); i++) {
         RedisModule_Free(evicted_items[i]);
       }
       array_free(evicted_items);
       array_free(batch_rinfo);
-
       pthread_mutex_lock(&run_queue_info->run_queue_mutex);
-
       run_queue_len = queueLength(run_queue_info->run_queue);
     }
   }
