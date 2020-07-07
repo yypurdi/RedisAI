@@ -741,8 +741,11 @@ def test_dagrun_modelrun_multidevice_resnet(env):
     outputvar = 'output'
     model_pb, script, labels, img = load_resnet_test_data()
 
-    device_0 = DEVICE + ':0'
-    device_1 = DEVICE + ':1'
+    # device_0 = DEVICE + ':0'
+    # device_1 = DEVICE + ':1'
+    device = 'CPU'
+    device_0 = device + ':0'
+    device_1 = device + ':1'
 
     ret = con.execute_command('AI.MODELSET', model_name_0, 'TF', device_0,
                               'INPUTS', inputvar,

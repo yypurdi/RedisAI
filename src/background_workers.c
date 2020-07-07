@@ -119,8 +119,9 @@ void *RedisAI_Run_ThreadMain(void *arg) {
 
       // TODO DAG BATCHING
       // If a batch item is a DAG and relies on unrealized outputs, just skip it
-      // and give way to other items, as long as the client is different (to
-      // avoid breaking the temporal sequence).
+      // and give way to other items, since the client is surely different (given
+      // the fact that commands are blocking for the individual clent, so that
+      // the temporal sequence of commands cannot be broken).
 
       while (item) {
         RedisAI_RunInfo *rinfo = (RedisAI_RunInfo *)item->value;
@@ -199,36 +200,16 @@ void *RedisAI_Run_ThreadMain(void *arg) {
         break;
       }
 
-      // DONE DAG
-      // We should avoid evicting a DAG item if it not done for the current
-      // device (i.e. if it's not the last job on the device). It's ok to keep
-      // it there because the priority is the one dictated by the position of
-      // the DAG object.
-      
       for (long long i = 0; i < array_len(evicted_items); i++) {
         queueEvict(run_queue_info->run_queue, evicted_items[i]);
       }
 
       pthread_mutex_unlock(&run_queue_info->run_queue_mutex);
 
-      // DONE DAG
-      // Here we should process one dag step and update. This should allow us to
-      // batch in the future, because we know what step we're performing. For
-      // this operation, we will need to acquire a mutex (the queue mutex itself
-      // is not enough, as the variable is shared) However, we could use an
-      // atomic integer to make things simple and avoid the mutex. The thing is
-      // that current mutexes only coordinate the main thread with each
-      // worker, here we need to coordinate individual workers.
-      // DONE DAG
-      // We need to equip each Dag run info with a mutex and allocate different
-      // run infos sharing the underlying data structures.
-      
       int dag_progress = 0;
       int dag_complete = 0;
       if (array_len(batch_rinfo) > 0) {
         if (batch_rinfo[0]->use_local_context == 1) {
-          // DONE DAG
-          // Report if there was progress or not
           RedisAI_DagRunSessionStep(batch_rinfo[0], run_queue_info->devicestr, &dag_progress, &dag_complete);
         } else {
           RAI_ModelRunScriptRunSession(batch_rinfo);
@@ -238,9 +219,6 @@ void *RedisAI_Run_ThreadMain(void *arg) {
       array_free(batch_rinfo);
 
       pthread_mutex_lock(&run_queue_info->run_queue_mutex);
-
-      // DONE DAG
-      // If job is waiting (no progress, i.e. entry offset for the device), then just flip the top of the queue
 
       for (long long i = 0; i < array_len(evicted_items); i++) {
         RedisAI_RunInfo *evicted_rinfo = (RedisAI_RunInfo *)(evicted_items[i]->value);

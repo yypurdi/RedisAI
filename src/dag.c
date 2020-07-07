@@ -62,8 +62,6 @@ void *RedisAI_DagRunSession_TensorGet_Step(RedisAI_RunInfo *rinfo, RAI_DagOp *cu
 
 void *RedisAI_DagRunSession_ModelRun_Step(RedisAI_RunInfo *rinfo, RAI_DagOp *currentOp, int *progress) {
   pthread_mutex_lock(&rinfo->dagMutex);
-  // TODO DAG
-  // get inkeys from local context
 
   for (int i=0; i<array_len(currentOp->inkeys); i++) {
     if (AI_dictFind(rinfo->dagTensorsContext,
@@ -146,8 +144,6 @@ void *RedisAI_DagRunSession_ModelRun_Step(RedisAI_RunInfo *rinfo, RAI_DagOp *cur
 
 void *RedisAI_DagRunSession_ScriptRun_Step(RedisAI_RunInfo *rinfo, RAI_DagOp *currentOp, int *progress) {
   pthread_mutex_lock(&rinfo->dagMutex);
-  // TODO DAG
-  // get inkeys from local context
 
   for (int i=0; i<array_len(currentOp->inkeys); i++) {
     if (AI_dictFind(rinfo->dagTensorsContext,
@@ -221,17 +217,6 @@ void *RedisAI_DagRunSession_ScriptRun_Step(RedisAI_RunInfo *rinfo, RAI_DagOp *cu
 void *RedisAI_DagRunSessionStep(RedisAI_RunInfo *rinfo, const char *devicestr, int *progress, int *complete) {
   RAI_DagOp *currentOp = NULL;
 
-  // if (rinfo->dagComplete) {
-  //   *progress = 0;
-  //   *complete = 1;
-  //   return NULL;
-  // }
-
-  // DONE DAG
-  // acquire mutex
-  // this is not strictly needed for access, but we may have contention
-  // if threads per queue are greater than one
-  // To simplify things we may well do everything under a mutex
   bool all_complete = true;
   pthread_mutex_lock(&rinfo->dagMutex);
   for (size_t i = 0; i < array_len(rinfo->dagOps); i++) {
@@ -246,44 +231,11 @@ void *RedisAI_DagRunSessionStep(RedisAI_RunInfo *rinfo, const char *devicestr, i
 
     if (rinfo->dagOps[i]->result == -1) {
       all_complete = false;
-
-      // TODO DAG
-      // 1. check that the op is compatibile with the current device [DONE]
-      // 2. check that all results are realized
-      //////////////// PROBLEM: we don't know which ones because they
-      ////////////////          haven't been parsed yet :-(
-      ////////////////          We need to defer the decision to later
-      ////////////////          once we know the keys
-      ////////////////          So basically we need to copy the keys
-      ////////////////          of the local scope, so that we can
-      ////////////////          check if they are there
-      // SOLUTION: we can get the currentOp and execute parsing (see
-      // below). If parsing is ok (aka localContext contains all inputs)
-      // then we execute, otherwise we don't proceed
-      // We only have to make sure we exit the parser managing memory
-      // correctly (ie not leaking)
       currentOp = rinfo->dagOps[i];
-      
-      // TODO DAG
-      // in theory we could get to the end while other devices
-      // are running other prior computations
-      // in this case we shouldn't unblock
-
-      // TODO DAG FIX
-      // Worker can be done even if not last op (if no other ops)
-      // Think about this
       break;
     }
   }
   
-  // TODO DAG
-  // If results are unrealized so that computation cannot proceed, 
-  // then return making sure progress is set to 0
-
-  // TODO DAG
-  // Decide whether to keep this here (it requires one extra round)
-  // or keep it here just to be safe
-
   if (currentOp == NULL && all_complete) {
     *complete = 1;
     if (rinfo->dagMaster && rinfo->client != NULL) {
@@ -292,25 +244,6 @@ void *RedisAI_DagRunSessionStep(RedisAI_RunInfo *rinfo, const char *devicestr, i
     }
     return NULL;
   }
-
-  // If all complete (ie currentOp == NULL) and all results are realized
-  // then unblock.
-  // It would be best to unblock here, rather than at the end.
-  // Unless we refuse to perform the last operation if not all
-  // results have been realized
-
-  // if (currentOp == NULL) {
-       // TODO DAG
-       // turn this into an error message
-  //   assert(0);
-  //   return NULL;
-  // }
-
-  // TODO DAG
-  // we must make sure we are not creating race conditions on currrentOp; 
-  // the only variable we access above is `result`. We need to acquire
-  // a lock in order to set result (FIXME)
-  // printf("%d %s\n", currentOp->commandType, devicestr);
 
   for (int i=0; i<array_len(currentOp->inkeys); i++) {
     if (AI_dictFind(rinfo->dagTensorsContext,
@@ -460,7 +393,7 @@ int RedisAI_DagRun_Reply(RedisModuleCtx *ctx, RedisModuleString **argv,
   }
 
   AI_dictIterator *persist_iter =
-      AI_dictGetSafeIterator(rinfo->dagTensorsPersistentContext);
+      AI_dictGetSafeIterator(rinfo->dagTensorsPersistedContext);
   AI_dictEntry *persist_entry = AI_dictNext(persist_iter);
   while (persist_entry) {
     const char *persist_key_name = AI_dictGetKey(persist_entry);
@@ -659,7 +592,7 @@ int RedisAI_DagRunSyntaxParser(RedisModuleCtx *ctx, RedisModuleString **argv,
       persistFlag = 1;
       const int parse_result =
           RAI_parseDAGPersistArgs(ctx, &argv[argpos], argc - argpos,
-                                  &(rinfo->dagTensorsPersistentContext), "|>");
+                                  &(rinfo->dagTensorsPersistedContext), "|>");
       if (parse_result > 0) {
         argpos += parse_result - 1;
       } else {
@@ -761,17 +694,12 @@ int RedisAI_DagRunSyntaxParser(RedisModuleCtx *ctx, RedisModuleString **argv,
         break;
     }
   }
+
+  // At this point we can mangle.
+  // We iterate over the dagOps, in order, and mangle outputs and inputs
+  // We need to make sure we can de-mangle persisted keys but that should
+  // be easy enough: just remove the last, say, 4 digits.
  
-  // DONE DAG
-  // Now clone RunInfo as needed, equip it with appropriate mutex locks
-  // and push it to the appropriate devices
-
-  // If there was no MODELRUN or SCRIPTRUN on the DAG, we default all ops to CPU
-  // if (deviceStr == NULL) {
-  //   deviceStr = "CPU";
-  // }
-  // If the queue does not exist, initialize it
-
   rinfo->client = RedisModule_BlockClient(ctx, RedisAI_DagRun_Reply, NULL, NULL, 0);
 
   for (long long i=0; i<array_len(rinfo->dagOps); i++) {

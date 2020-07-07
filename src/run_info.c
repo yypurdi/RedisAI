@@ -124,9 +124,9 @@ int RAI_InitRunInfo(RedisAI_RunInfo **result) {
   if (!(rinfo->dagTensorsLoadedContext)) {
     return REDISMODULE_ERR;
   }
-  rinfo->dagTensorsPersistentContext =
+  rinfo->dagTensorsPersistedContext =
       AI_dictCreate(&AI_dictTypeHeapStrings, NULL);
-  if (!(rinfo->dagTensorsPersistentContext)) {
+  if (!(rinfo->dagTensorsPersistedContext)) {
     return REDISMODULE_ERR;
   }
   rinfo->dagOps = (RAI_DagOp **)array_new(RAI_DagOp *, 1);
@@ -160,7 +160,7 @@ int RAI_ShallowCopyDagRunInfo(RedisAI_RunInfo **result, RedisAI_RunInfo *src) {
   rinfo->use_local_context = src->use_local_context;
   rinfo->dagTensorsContext = src->dagTensorsContext;
   rinfo->dagTensorsLoadedContext = src->dagTensorsLoadedContext;
-  rinfo->dagTensorsPersistentContext = src->dagTensorsPersistentContext;
+  rinfo->dagTensorsPersistedContext = src->dagTensorsPersistedContext;
   rinfo->dagOps = src->dagOps;
   rinfo->dagReplyLength = src->dagReplyLength;
   rinfo->dagNumberCommands = src->dagNumberCommands;
@@ -233,7 +233,7 @@ void RAI_FreeRunInfo(RedisModuleCtx *ctx, struct RedisAI_RunInfo *rinfo) {
       if (tensor && key != NULL) {
         // if the key is persistent then we should not delete it
         AI_dictEntry *persistent_entry =
-            AI_dictFind(rinfo->dagTensorsPersistentContext, key);
+            AI_dictFind(rinfo->dagTensorsPersistedContext, key);
         // if the key was loaded from the keyspace then we should not delete it
         AI_dictEntry *loaded_entry =
             AI_dictFind(rinfo->dagTensorsLoadedContext, key);
@@ -243,7 +243,7 @@ void RAI_FreeRunInfo(RedisModuleCtx *ctx, struct RedisAI_RunInfo *rinfo) {
         }
 
         if (persistent_entry) {
-          AI_dictDelete(rinfo->dagTensorsPersistentContext, key);
+          AI_dictDelete(rinfo->dagTensorsPersistedContext, key);
         }
         if (loaded_entry) {
           AI_dictDelete(rinfo->dagTensorsLoadedContext, key);
@@ -255,7 +255,7 @@ void RAI_FreeRunInfo(RedisModuleCtx *ctx, struct RedisAI_RunInfo *rinfo) {
 
     RedisModule_Free(rinfo->dagTensorsContext);
     RedisModule_Free(rinfo->dagTensorsLoadedContext);
-    RedisModule_Free(rinfo->dagTensorsPersistentContext);
+    RedisModule_Free(rinfo->dagTensorsPersistedContext);
   }
 
   if (rinfo->dagOps) {
