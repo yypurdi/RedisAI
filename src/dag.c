@@ -31,7 +31,7 @@ void *RedisAI_DagRunSession_TensorSet_Step(RedisAI_RunInfo *rinfo, RAI_DagOp *cu
       NULL, currentOp->argv, currentOp->argc, &t, 0, currentOp->err);
   if (parse_result > 0) {
     const char *key_string =
-        RedisModule_StringPtrLen(currentOp->argv[1], NULL);
+        RedisModule_StringPtrLen(currentOp->outkeys[0], NULL);
     const char *dictKey = RedisModule_Strdup(key_string);
     pthread_mutex_lock(&rinfo->dagMutex);
     AI_dictReplace(rinfo->dagTensorsContext, (void*)dictKey, t);
@@ -44,7 +44,7 @@ void *RedisAI_DagRunSession_TensorSet_Step(RedisAI_RunInfo *rinfo, RAI_DagOp *cu
 }
 
 void *RedisAI_DagRunSession_TensorGet_Step(RedisAI_RunInfo *rinfo, RAI_DagOp *currentOp, int *progress) {
-  const char *key_string = RedisModule_StringPtrLen(currentOp->argv[1], NULL);
+  const char *key_string = RedisModule_StringPtrLen(currentOp->inkeys[0], NULL);
   RAI_Tensor *t = NULL;
   pthread_mutex_lock(&rinfo->dagMutex);
   currentOp->result = RAI_getTensorFromLocalContext(
@@ -402,10 +402,13 @@ int RedisAI_DagRun_Reply(RedisModuleCtx *ctx, RedisModuleString **argv,
     if (tensor_entry) {
       RAI_Tensor *tensor = AI_dictGetVal(tensor_entry);
       RedisModuleKey *key;
+      char *demangled_key_name = RedisModule_Strdup(persist_key_name);
+      demangled_key_name[strlen(persist_key_name) - 4] = 0;
       RedisModuleString *tensor_keyname = RedisModule_CreateString(
-          ctx, persist_key_name, strlen(persist_key_name));
+          ctx, demangled_key_name, strlen(demangled_key_name));
       const int status = RAI_OpenKey_Tensor(
           ctx, tensor_keyname, &key, REDISMODULE_READ | REDISMODULE_WRITE);
+      RedisModule_Free(demangled_key_name);
       if (status == REDISMODULE_ERR) {
         RedisModule_ReplyWithError(ctx, "ERR could not save tensor");
         rinfo->dagReplyLength++;
@@ -495,7 +498,8 @@ int RAI_parseDAGLoadArgs(RedisModuleCtx *ctx, RedisModuleString **argv,
         return -1;
       }
       RedisModule_CloseKey(key);
-      const char *dictKey = RedisModule_Strdup(arg_string);
+      char *dictKey = RedisModule_Alloc(strlen(arg_string) + 4);
+      sprintf(dictKey, "%s%04d", arg_string, 1);
       AI_dictAdd(*localContextDict, (void*)dictKey, t);
       const char *keyspacePersistKey = RedisModule_Strdup(dictKey);
       AI_dictAdd(*loadedContextDict, (void*)keyspacePersistKey, (void *)1);
@@ -695,18 +699,106 @@ int RedisAI_DagRunSyntaxParser(RedisModuleCtx *ctx, RedisModuleString **argv,
     }
   }
 
-  // At this point we can mangle.
-  // We iterate over the dagOps, in order, and mangle outputs and inputs
-  // We need to make sure we can de-mangle persisted keys but that should
-  // be easy enough: just remove the last, say, 4 digits.
- 
-  rinfo->client = RedisModule_BlockClient(ctx, RedisAI_DagRun_Reply, NULL, NULL, 0);
+  AI_dict* mangled_tensors = AI_dictCreate(&AI_dictTypeHeapStrings, NULL);
+  if (!mangled_tensors) {
+    return REDISMODULE_ERR;
+  }
+
+  {
+    AI_dictIterator *iter = AI_dictGetSafeIterator(rinfo->dagTensorsLoadedContext);
+    AI_dictEntry *entry = AI_dictNext(iter);
+    while (entry) {
+      char *key = (char *)AI_dictGetKey(entry);
+      char *demangled_key = RedisModule_Strdup(key);
+      demangled_key[strlen(key) - 4] = 0;
+      int *instance = RedisModule_Alloc(sizeof(int));
+      *instance = 1;
+      AI_dictAdd(mangled_tensors, (void *)demangled_key, (void *)instance);
+      entry = AI_dictNext(iter);
+    }
+    AI_dictReleaseIterator(iter);
+  }
+
+  for (long long i=0; i<array_len(rinfo->dagOps); i++) {
+    RAI_DagOp *currentOp = rinfo->dagOps[i];
+
+    RedisModuleString **mangled_inkeys = array_new(RedisModuleString*, array_len(currentOp->inkeys));
+    for (long long j=0; j<array_len(currentOp->inkeys); j++) {
+      const char* key = RedisModule_StringPtrLen(currentOp->inkeys[j], NULL);
+      AI_dictEntry *entry = AI_dictFind(mangled_tensors, key);
+      if (!entry) {
+        return REDISMODULE_ERR;
+      } 
+      int *instance = AI_dictGetVal(entry);
+      RedisModuleString *mangled_key = RedisModule_CreateStringPrintf(ctx, "%s%04d", key, *instance);
+      mangled_inkeys = array_append(mangled_inkeys, mangled_key);
+    }
+
+    RedisModuleString **mangled_outkeys = array_new(RedisModuleString*, array_len(currentOp->outkeys));
+    for (long long j=0; j<array_len(currentOp->outkeys); j++) {
+      const char* key = RedisModule_StringPtrLen(currentOp->outkeys[j], NULL);
+      AI_dictEntry *entry = AI_dictFind(mangled_tensors, key);
+      int *instance = NULL;
+      if (entry) {
+        instance = AI_dictGetVal(entry);
+        *instance += 1;
+      }
+      else {
+        instance = RedisModule_Alloc(sizeof(int));
+        *instance = 1;
+        AI_dictAdd(mangled_tensors, (void *)key, (void *)instance);
+      }
+      RedisModuleString *mangled_key = RedisModule_CreateStringPrintf(ctx, "%s%04d", key, *instance);
+      mangled_outkeys = array_append(mangled_outkeys, mangled_key);
+    }
+  
+    array_free(currentOp->inkeys);
+    array_free(currentOp->outkeys);
+
+    currentOp->inkeys = mangled_inkeys;
+    currentOp->outkeys = mangled_outkeys;
+  }
+
+  AI_dict* mangled_persisted = AI_dictCreate(&AI_dictTypeHeapStrings, NULL);
+  {
+    AI_dictIterator *iter = AI_dictGetSafeIterator(rinfo->dagTensorsPersistedContext);
+    AI_dictEntry *entry = AI_dictNext(iter);
+    while (entry) {
+      char *key = (char *)AI_dictGetKey(entry);
+      AI_dictEntry *mangled_entry = AI_dictFind(mangled_tensors, key);
+      if (!mangled_entry) {
+        return REDISMODULE_ERR;
+      } 
+      int *instance = AI_dictGetVal(mangled_entry);
+      RedisModuleString *mangled_key = RedisModule_CreateStringPrintf(ctx, "%s%04d", key, *instance);
+      AI_dictAdd(mangled_persisted, RedisModule_StringPtrLen(mangled_key, NULL), (void *)1);
+      entry = AI_dictNext(iter);
+    }
+    AI_dictReleaseIterator(iter);
+  }
+
+  rinfo->dagTensorsPersistedContext = mangled_persisted;
+
+  {
+    AI_dictIterator *iter = AI_dictGetSafeIterator(mangled_tensors);
+    AI_dictEntry *entry = AI_dictNext(iter);
+    while (entry) {
+      int *val = (int *)AI_dictGetVal(entry);
+      RedisModule_Free(val);
+      entry = AI_dictNext(iter);
+    }
+    AI_dictReleaseIterator(iter);
+  }
+  AI_dictRelease(mangled_tensors);
+  mangled_tensors = NULL;
 
   for (long long i=0; i<array_len(rinfo->dagOps); i++) {
     if (rinfo->dagOps[i]->devicestr == NULL) {
       rinfo->dagOps[i]->devicestr = "CPU";
     }
   }
+
+  rinfo->client = RedisModule_BlockClient(ctx, RedisAI_DagRun_Reply, NULL, NULL, 0);
 
   const char **devices = array_new(const char *, 10);
 

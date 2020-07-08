@@ -231,18 +231,18 @@ void RAI_FreeRunInfo(RedisModuleCtx *ctx, struct RedisAI_RunInfo *rinfo) {
       char *key = (char *)AI_dictGetKey(entry);
 
       if (tensor && key != NULL) {
-        // if the key is persistent then we should not delete it
-        AI_dictEntry *persistent_entry =
+        // if the key is persisted then we should not delete it
+        AI_dictEntry *persisted_entry =
             AI_dictFind(rinfo->dagTensorsPersistedContext, key);
         // if the key was loaded from the keyspace then we should not delete it
         AI_dictEntry *loaded_entry =
             AI_dictFind(rinfo->dagTensorsLoadedContext, key);
 
-        if (persistent_entry == NULL && loaded_entry == NULL) {
+        if (persisted_entry == NULL && loaded_entry == NULL) {
           AI_dictDelete(rinfo->dagTensorsContext, key);
         }
 
-        if (persistent_entry) {
+        if (persisted_entry) {
           AI_dictDelete(rinfo->dagTensorsPersistedContext, key);
         }
         if (loaded_entry) {
