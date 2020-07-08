@@ -235,7 +235,7 @@ void *RedisAI_DagRunSessionStep(RedisAI_RunInfo *rinfo, const char *devicestr, i
       break;
     }
   }
-  
+
   if (currentOp == NULL && all_complete) {
     *complete = 1;
     if (rinfo->dagMaster && rinfo->client != NULL) {
@@ -254,39 +254,45 @@ void *RedisAI_DagRunSessionStep(RedisAI_RunInfo *rinfo, const char *devicestr, i
     }
   }
 
+  RAI_DagOp *currentOpCopy = NULL;
+  RAI_ShallowCloneDagOp(currentOp, &currentOpCopy);
+
   pthread_mutex_unlock(&rinfo->dagMutex);
 
-  switch (currentOp->commandType) {
+  switch (currentOpCopy->commandType) {
     case REDISAI_DAG_CMD_TENSORSET: {
-      RedisAI_DagRunSession_TensorSet_Step(rinfo, currentOp, progress);
+      RedisAI_DagRunSession_TensorSet_Step(rinfo, currentOpCopy, progress);
       break;
     }
     case REDISAI_DAG_CMD_TENSORGET: {
-      RedisAI_DagRunSession_TensorGet_Step(rinfo, currentOp, progress);
+      RedisAI_DagRunSession_TensorGet_Step(rinfo, currentOpCopy, progress);
       break;
     }
     case REDISAI_DAG_CMD_MODELRUN: {
-      RedisAI_DagRunSession_ModelRun_Step(rinfo, currentOp, progress);
+      RedisAI_DagRunSession_ModelRun_Step(rinfo, currentOpCopy, progress);
       break;
     }
     case REDISAI_DAG_CMD_SCRIPTRUN: {
-      RedisAI_DagRunSession_ScriptRun_Step(rinfo, currentOp, progress);
+      RedisAI_DagRunSession_ScriptRun_Step(rinfo, currentOpCopy, progress);
       break;
     }
     default: {
       /* unsupported DAG's command */
-      RAI_SetError(currentOp->err, RAI_EDAGRUN, "ERR unsupported command within DAG");
-      currentOp->result = REDISMODULE_ERR;
+      RAI_SetError(currentOpCopy->err, RAI_EDAGRUN, "ERR unsupported command within DAG");
+      currentOpCopy->result = REDISMODULE_ERR;
       break;
     }
   }
 
+  pthread_mutex_lock(&rinfo->dagMutex);
+  RAI_ShallowCopyDagOpResult(currentOpCopy, currentOp);
+
   if (currentOp->result == REDISMODULE_OK) {
     *progress = 1;
+    pthread_mutex_unlock(&rinfo->dagMutex);
   }
   else {
     *progress = 0;
-    pthread_mutex_lock(&rinfo->dagMutex);
     *rinfo->dagError = 1;
     pthread_mutex_unlock(&rinfo->dagMutex);
     if (rinfo->dagMaster && rinfo->client != NULL) {
@@ -294,7 +300,7 @@ void *RedisAI_DagRunSessionStep(RedisAI_RunInfo *rinfo, const char *devicestr, i
     }
     return NULL;
   }
-
+  
   return NULL;
 }
 
@@ -771,7 +777,7 @@ int RedisAI_DagRunSyntaxParser(RedisModuleCtx *ctx, RedisModuleString **argv,
       } 
       int *instance = AI_dictGetVal(mangled_entry);
       RedisModuleString *mangled_key = RedisModule_CreateStringPrintf(ctx, "%s%04d", key, *instance);
-      AI_dictAdd(mangled_persisted, RedisModule_StringPtrLen(mangled_key, NULL), (void *)1);
+      AI_dictAdd(mangled_persisted, (void *)RedisModule_StringPtrLen(mangled_key, NULL), (void *)1);
       entry = AI_dictNext(iter);
     }
     AI_dictReleaseIterator(iter);

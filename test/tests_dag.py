@@ -734,8 +734,8 @@ def test_dagrun_modelrun_multidevice_resnet(env):
     if (not TEST_TF or not TEST_PT):
         return
     con = env.getConnection()
-    model_name_0 = 'imagenet_model'
-    model_name_1 = 'imagenet_model'
+    model_name_0 = 'imagenet_model1'
+    model_name_1 = 'imagenet_model2'
     script_name = 'imagenet_script'
     inputvar = 'images'
     outputvar = 'output'
