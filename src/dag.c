@@ -256,44 +256,34 @@ void *RedisAI_DagRunSessionStep(RedisAI_RunInfo *rinfo, const char *devicestr, i
     }
   }
 
-#if 0
-  RAI_DagOp *currentOpCopy = NULL;
-  RAI_ShallowCloneDagOp(currentOp, &currentOpCopy);
-#endif
-  RAI_DagOp *currentOpCopy = currentOp;
-
   pthread_mutex_unlock(rinfo->dagMutex);
 
-  switch (currentOpCopy->commandType) {
+  switch (currentOp->commandType) {
     case REDISAI_DAG_CMD_TENSORSET: {
-      RedisAI_DagRunSession_TensorSet_Step(rinfo, currentOpCopy, progress);
+      RedisAI_DagRunSession_TensorSet_Step(rinfo, currentOp, progress);
       break;
     }
     case REDISAI_DAG_CMD_TENSORGET: {
-      RedisAI_DagRunSession_TensorGet_Step(rinfo, currentOpCopy, progress);
+      RedisAI_DagRunSession_TensorGet_Step(rinfo, currentOp, progress);
       break;
     }
     case REDISAI_DAG_CMD_MODELRUN: {
-      RedisAI_DagRunSession_ModelRun_Step(rinfo, currentOpCopy, progress);
+      RedisAI_DagRunSession_ModelRun_Step(rinfo, currentOp, progress);
       break;
     }
     case REDISAI_DAG_CMD_SCRIPTRUN: {
-      RedisAI_DagRunSession_ScriptRun_Step(rinfo, currentOpCopy, progress);
+      RedisAI_DagRunSession_ScriptRun_Step(rinfo, currentOp, progress);
       break;
     }
     default: {
       /* unsupported DAG's command */
-      RAI_SetError(currentOpCopy->err, RAI_EDAGRUN, "ERR unsupported command within DAG");
-      currentOpCopy->result = REDISMODULE_ERR;
+      RAI_SetError(currentOp->err, RAI_EDAGRUN, "ERR unsupported command within DAG");
+      currentOp->result = REDISMODULE_ERR;
       break;
     }
   }
 
   pthread_mutex_lock(rinfo->dagMutex);
-#if 0
-  // RAI_ShallowCopyDagOpResult(currentOpCopy, currentOp);
-#endif
-  currentOp = currentOpCopy;
 
   if (currentOp->result == REDISMODULE_OK) {
     *progress = 1;

@@ -62,12 +62,6 @@ int RAI_InitDagOp(RAI_DagOp **result);
  */
 void RAI_FreeDagOp(RedisModuleCtx *ctx, RAI_DagOp *dagOp);
 
-#if 0
-int RAI_ShallowCloneDagOp(RAI_DagOp *input, RAI_DagOp **result);
-
-int RAI_ShallowCopyDagOpResult(RAI_DagOp *input, RAI_DagOp *output);
-#endif
-
 /**
  * This structure represents the context in which RedisAI blocking commands
  * operate.
