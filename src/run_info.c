@@ -18,25 +18,25 @@
 
 
 static uint64_t RAI_TensorDictKeyHashFunction(const void *key){
-    return AI_dictGenHashFunction(key, strlen((char*)key));
+  return AI_dictGenHashFunction(key, strlen((char*)key));
 }
 
 static int RAI_TensorDictKeyStrcmp(void *privdata, const void *key1, const void *key2){
-    const char* strKey1 = key1;
-    const char* strKey2 = key2;
-    return strcmp(strKey1, strKey2) == 0;
+  const char* strKey1 = key1;
+  const char* strKey2 = key2;
+  return strcmp(strKey1, strKey2) == 0;
 }
 
 static void RAI_TensorDictKeyFree(void *privdata, void *key){
-    RedisModule_Free(key);
+  RedisModule_Free(key);
 }
 
 static void* RAI_TensorDictKeyDup(void *privdata, const void *key){
-    return RedisModule_Strdup((char*)key);
+  return RedisModule_Strdup((char*)key);
 }
 
 static void RAI_TensorDictValFree(void *privdata, const void *obj){
-    return RAI_TensorFree((RAI_Tensor*)obj);
+  return RAI_TensorFree((RAI_Tensor*)obj);
 }
 
 
@@ -94,6 +94,7 @@ int RAI_InitDagOp(RAI_DagOp **result) {
   return REDISMODULE_OK;
 }
 
+#if 0
 int RAI_ShallowCloneDagOp(RAI_DagOp *input, RAI_DagOp **output) {
   RAI_DagOp *dagOp;
   dagOp = (RAI_DagOp *)RedisModule_Calloc(1, sizeof(RAI_DagOp));
@@ -185,6 +186,7 @@ int RAI_ShallowCopyDagOpResult(RAI_DagOp *input, RAI_DagOp *output) {
 
   return REDISMODULE_OK;
 }
+#endif
 
 /**
  * Allocate the memory and initialise the RedisAI_RunInfo.
@@ -229,7 +231,8 @@ int RAI_InitRunInfo(RedisAI_RunInfo **result) {
   rinfo->dagNumberCommands = 0;
   rinfo->dagMaster = 1;
   rinfo->dagError = RedisModule_Calloc(1, sizeof(int));
-  pthread_mutex_init(&rinfo->dagMutex, NULL);
+  rinfo->dagMutex = RedisModule_Alloc(sizeof(pthread_mutex_t));
+  pthread_mutex_init(rinfo->dagMutex, NULL);
   *result = rinfo;
   return REDISMODULE_OK;
 }
@@ -305,11 +308,13 @@ void RAI_FreeRunInfo(RedisModuleCtx *ctx, struct RedisAI_RunInfo *rinfo) {
   RAI_FreeError(rinfo->err);
 
   if (rinfo->use_local_context) {
-    pthread_mutex_destroy(&rinfo->dagMutex);
-
     if (rinfo->dagMaster == 0) {
       RedisModule_Free(rinfo);
       return;
+    }
+    else {
+      pthread_mutex_destroy(rinfo->dagMutex);
+      RedisModule_Free(rinfo->dagMutex);
     }
   }
 

@@ -33,9 +33,9 @@ void *RedisAI_DagRunSession_TensorSet_Step(RedisAI_RunInfo *rinfo, RAI_DagOp *cu
     const char *key_string =
         RedisModule_StringPtrLen(currentOp->outkeys[0], NULL);
     const char *dictKey = RedisModule_Strdup(key_string);
-    pthread_mutex_lock(&rinfo->dagMutex);
+    pthread_mutex_lock(rinfo->dagMutex);
     AI_dictReplace(rinfo->dagTensorsContext, (void*)dictKey, t);
-    pthread_mutex_unlock(&rinfo->dagMutex);
+    pthread_mutex_unlock(rinfo->dagMutex);
     currentOp->result = REDISMODULE_OK;
   } else {
     currentOp->result = REDISMODULE_ERR;
@@ -46,10 +46,10 @@ void *RedisAI_DagRunSession_TensorSet_Step(RedisAI_RunInfo *rinfo, RAI_DagOp *cu
 void *RedisAI_DagRunSession_TensorGet_Step(RedisAI_RunInfo *rinfo, RAI_DagOp *currentOp, int *progress) {
   const char *key_string = RedisModule_StringPtrLen(currentOp->inkeys[0], NULL);
   RAI_Tensor *t = NULL;
-  pthread_mutex_lock(&rinfo->dagMutex);
+  pthread_mutex_lock(rinfo->dagMutex);
   currentOp->result = RAI_getTensorFromLocalContext(
       NULL, rinfo->dagTensorsContext, key_string, &t, currentOp->err);
-  pthread_mutex_unlock(&rinfo->dagMutex);
+  pthread_mutex_unlock(rinfo->dagMutex);
   if (currentOp->result == REDISMODULE_OK) {
     RAI_Tensor *outTensor = NULL;
     // TODO: check tensor copy return value
@@ -61,12 +61,12 @@ void *RedisAI_DagRunSession_TensorGet_Step(RedisAI_RunInfo *rinfo, RAI_DagOp *cu
 }
 
 void *RedisAI_DagRunSession_ModelRun_Step(RedisAI_RunInfo *rinfo, RAI_DagOp *currentOp, int *progress) {
-  pthread_mutex_lock(&rinfo->dagMutex);
+  pthread_mutex_lock(rinfo->dagMutex);
 
   for (int i=0; i<array_len(currentOp->inkeys); i++) {
     if (AI_dictFind(rinfo->dagTensorsContext,
                     RedisModule_StringPtrLen(currentOp->inkeys[i], NULL)) == NULL) {
-      pthread_mutex_unlock(&rinfo->dagMutex);
+      pthread_mutex_unlock(rinfo->dagMutex);
       *progress = 0;
       return NULL;
     }
@@ -79,7 +79,7 @@ void *RedisAI_DagRunSession_ModelRun_Step(RedisAI_RunInfo *rinfo, RAI_DagOp *cur
         NULL, rinfo->dagTensorsContext, RedisModule_StringPtrLen(currentOp->inkeys[i], NULL), &inputTensor, currentOp->err);
     if (get_result == REDISMODULE_ERR) {
       currentOp->result = REDISMODULE_ERR;
-      pthread_mutex_unlock(&rinfo->dagMutex);
+      pthread_mutex_unlock(rinfo->dagMutex);
       return NULL;
     }
     inputTensors[i] = inputTensor;
@@ -94,7 +94,7 @@ void *RedisAI_DagRunSession_ModelRun_Step(RedisAI_RunInfo *rinfo, RAI_DagOp *cur
       RAI_SetError(currentOp->err, RAI_EMODELRUN,
                    "ERR cannot add input to DAG's MODELRUN context");
       currentOp->result = REDISMODULE_ERR;
-      pthread_mutex_unlock(&rinfo->dagMutex);
+      pthread_mutex_unlock(rinfo->dagMutex);
       return NULL;
     }
   }
@@ -108,12 +108,12 @@ void *RedisAI_DagRunSession_ModelRun_Step(RedisAI_RunInfo *rinfo, RAI_DagOp *cur
       RAI_SetError(currentOp->err, RAI_EMODELRUN,
                    "ERR cannot add output to DAG's MODELRUN context");
       currentOp->result = REDISMODULE_ERR;
-      pthread_mutex_unlock(&rinfo->dagMutex);
+      pthread_mutex_unlock(rinfo->dagMutex);
       return NULL;
     }
   }
 
-  pthread_mutex_unlock(&rinfo->dagMutex);
+  pthread_mutex_unlock(rinfo->dagMutex);
 
   RAI_ModelRunCtx *mctxs[1];
   mctxs[0] = currentOp->mctx;
@@ -121,6 +121,7 @@ void *RedisAI_DagRunSession_ModelRun_Step(RedisAI_RunInfo *rinfo, RAI_DagOp *cur
   const long long start = ustime();
   currentOp->result = RAI_ModelRun(mctxs, 1, currentOp->err);
   currentOp->duration_us = ustime() - start;
+
   const size_t noutputs = RAI_ModelRunCtxNumOutputs(currentOp->mctx);
   for (size_t outputNumber = 0; outputNumber<noutputs; outputNumber++) {
     RAI_Tensor *tensor = RAI_ModelRunCtxOutputTensor(currentOp->mctx, outputNumber);
@@ -128,9 +129,9 @@ void *RedisAI_DagRunSession_ModelRun_Step(RedisAI_RunInfo *rinfo, RAI_DagOp *cur
       const char *key_string = RedisModule_StringPtrLen(
           currentOp->outkeys[outputNumber], NULL);
       const char *dictKey = RedisModule_Strdup(key_string);
-      pthread_mutex_lock(&rinfo->dagMutex);
+      pthread_mutex_lock(rinfo->dagMutex);
       AI_dictReplace(rinfo->dagTensorsContext, (void*)dictKey, tensor);
-      pthread_mutex_unlock(&rinfo->dagMutex);
+      pthread_mutex_unlock(rinfo->dagMutex);
     } else {
       RAI_SetError(currentOp->err, RAI_ESCRIPTRUN,
                    "ERR output tensor on DAG's SCRIPTRUN was null");
@@ -143,12 +144,12 @@ void *RedisAI_DagRunSession_ModelRun_Step(RedisAI_RunInfo *rinfo, RAI_DagOp *cur
 }
 
 void *RedisAI_DagRunSession_ScriptRun_Step(RedisAI_RunInfo *rinfo, RAI_DagOp *currentOp, int *progress) {
-  pthread_mutex_lock(&rinfo->dagMutex);
+  pthread_mutex_lock(rinfo->dagMutex);
 
   for (int i=0; i<array_len(currentOp->inkeys); i++) {
     if (AI_dictFind(rinfo->dagTensorsContext,
                     RedisModule_StringPtrLen(currentOp->inkeys[i], NULL)) == NULL) {
-      pthread_mutex_unlock(&rinfo->dagMutex);
+      pthread_mutex_unlock(rinfo->dagMutex);
       *progress = 0;
       return NULL;
     }
@@ -161,7 +162,7 @@ void *RedisAI_DagRunSession_ScriptRun_Step(RedisAI_RunInfo *rinfo, RAI_DagOp *cu
         NULL, rinfo->dagTensorsContext, RedisModule_StringPtrLen(currentOp->inkeys[i], NULL), &inputTensor, currentOp->err);
     if (get_result == REDISMODULE_ERR) {
       currentOp->result = REDISMODULE_ERR;
-      pthread_mutex_unlock(&rinfo->dagMutex);
+      pthread_mutex_unlock(rinfo->dagMutex);
       return NULL;
     }
     inputTensors[i] = inputTensor;
@@ -170,7 +171,7 @@ void *RedisAI_DagRunSession_ScriptRun_Step(RedisAI_RunInfo *rinfo, RAI_DagOp *cu
   for (int i=0; i<array_len(currentOp->inkeys); i++) {
     if (!RAI_ScriptRunCtxAddInput(currentOp->sctx, inputTensors[i], currentOp->err)) {
       currentOp->result = REDISMODULE_ERR;
-      pthread_mutex_unlock(&rinfo->dagMutex);
+      pthread_mutex_unlock(rinfo->dagMutex);
       return NULL;
     }
   }
@@ -180,12 +181,12 @@ void *RedisAI_DagRunSession_ScriptRun_Step(RedisAI_RunInfo *rinfo, RAI_DagOp *cu
       RAI_SetError(currentOp->err, RAI_ESCRIPTRUN,
                    "ERR cannot add output to DAG's SCRIPTRUN context");
       currentOp->result = REDISMODULE_ERR;
-      pthread_mutex_unlock(&rinfo->dagMutex);
+      pthread_mutex_unlock(rinfo->dagMutex);
       return NULL;
     }
   } 
 
-  pthread_mutex_unlock(&rinfo->dagMutex);
+  pthread_mutex_unlock(rinfo->dagMutex);
 
   currentOp->result = REDISMODULE_OK;
   const long long start = ustime();
@@ -200,9 +201,9 @@ void *RedisAI_DagRunSession_ScriptRun_Step(RedisAI_RunInfo *rinfo, RAI_DagOp *cu
       const char *key_string = RedisModule_StringPtrLen(
               currentOp->outkeys[outputNumber], NULL);
       const char *dictKey = RedisModule_Strdup(key_string);
-      pthread_mutex_lock(&rinfo->dagMutex);
+      pthread_mutex_lock(rinfo->dagMutex);
       AI_dictReplace(rinfo->dagTensorsContext, (void*)dictKey, tensor);
-      pthread_mutex_unlock(&rinfo->dagMutex);
+      pthread_mutex_unlock(rinfo->dagMutex);
     } else {
       RAI_SetError(currentOp->err, RAI_EMODELRUN,
                    "ERR output tensor on DAG's SCRIPTRUN was null");
@@ -217,8 +218,9 @@ void *RedisAI_DagRunSession_ScriptRun_Step(RedisAI_RunInfo *rinfo, RAI_DagOp *cu
 void *RedisAI_DagRunSessionStep(RedisAI_RunInfo *rinfo, const char *devicestr, int *progress, int *complete) {
   RAI_DagOp *currentOp = NULL;
 
+  pthread_mutex_lock(rinfo->dagMutex);
+
   bool all_complete = true;
-  pthread_mutex_lock(&rinfo->dagMutex);
   for (size_t i = 0; i < array_len(rinfo->dagOps); i++) {
 
     if (rinfo->dagOps[i]->result >= 0) {
@@ -238,8 +240,8 @@ void *RedisAI_DagRunSessionStep(RedisAI_RunInfo *rinfo, const char *devicestr, i
 
   if (currentOp == NULL && all_complete) {
     *complete = 1;
-    if (rinfo->dagMaster && rinfo->client != NULL) {
-      pthread_mutex_unlock(&rinfo->dagMutex);
+    pthread_mutex_unlock(rinfo->dagMutex);
+    if (rinfo->client != NULL) {
       RedisModule_UnblockClient(rinfo->client, rinfo);
     }
     return NULL;
@@ -248,16 +250,19 @@ void *RedisAI_DagRunSessionStep(RedisAI_RunInfo *rinfo, const char *devicestr, i
   for (int i=0; i<array_len(currentOp->inkeys); i++) {
     if (AI_dictFind(rinfo->dagTensorsContext,
                     RedisModule_StringPtrLen(currentOp->inkeys[i], NULL)) == NULL) {
-      pthread_mutex_unlock(&rinfo->dagMutex);
+      pthread_mutex_unlock(rinfo->dagMutex);
       *progress = 0;
       return NULL;
     }
   }
 
+#if 0
   RAI_DagOp *currentOpCopy = NULL;
   RAI_ShallowCloneDagOp(currentOp, &currentOpCopy);
+#endif
+  RAI_DagOp *currentOpCopy = currentOp;
 
-  pthread_mutex_unlock(&rinfo->dagMutex);
+  pthread_mutex_unlock(rinfo->dagMutex);
 
   switch (currentOpCopy->commandType) {
     case REDISAI_DAG_CMD_TENSORSET: {
@@ -284,20 +289,23 @@ void *RedisAI_DagRunSessionStep(RedisAI_RunInfo *rinfo, const char *devicestr, i
     }
   }
 
-  pthread_mutex_lock(&rinfo->dagMutex);
-  RAI_ShallowCopyDagOpResult(currentOpCopy, currentOp);
+  pthread_mutex_lock(rinfo->dagMutex);
+#if 0
+  // RAI_ShallowCopyDagOpResult(currentOpCopy, currentOp);
+#endif
+  currentOp = currentOpCopy;
 
   if (currentOp->result == REDISMODULE_OK) {
     *progress = 1;
-    pthread_mutex_unlock(&rinfo->dagMutex);
+    pthread_mutex_unlock(rinfo->dagMutex);
   }
   else {
     *progress = 0;
     *rinfo->dagError = 1;
-    pthread_mutex_unlock(&rinfo->dagMutex);
-    if (rinfo->dagMaster && rinfo->client != NULL) {
+    if (rinfo->client != NULL) {
       RedisModule_UnblockClient(rinfo->client, rinfo);
     }
+    pthread_mutex_unlock(rinfo->dagMutex);
     return NULL;
   }
   
@@ -822,6 +830,13 @@ int RedisAI_DagRunSyntaxParser(RedisModuleCtx *ctx, RedisModuleString **argv,
     }
   }
   
+  // The problem is that master_device here is the last, but the fact that it is
+  // actually the last to run is incorrect. The exit condition for this needs
+  // to be different.
+  // For instance: the first that notices that all tasks have been executed
+  // is the one who should unblock. We need to set an unblocked flag for the
+  // others so that they know that they need to exit.
+  // In other words: there's no master_device ################################
   const char* master_device = rinfo->dagOps[array_len(rinfo->dagOps)-1]->devicestr;
 
   RedisAI_RunInfo **rinfo_copies = array_new(RedisAI_RunInfo*, 10);
